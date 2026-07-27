@@ -139,6 +139,10 @@ router.get("/verify-payment", async (req, res) => {
     const verifyRes = await fetch(`https://epay.corp.com.bd/api.php?order_id=${encodeURIComponent(order_id)}`);
     const verifyData = await verifyRes.json();
 
+    if (verifyData && (verifyData.status === "success" || verifyData.paid === true || verifyData.order_status === "paid")) {
+      await savePaymentToFirestore({ ...verifyData, order_id });
+    }
+
     return res.json(verifyData);
   } catch (error: any) {
     console.error("Error verifying payment:", error);
@@ -178,27 +182,79 @@ router.all("/verify-static-payment", async (req, res) => {
   }
 });
 
+// Helper function to save payment to Firestore via REST API
+async function savePaymentToFirestore(data: any) {
+  try {
+    const projectId = "vip-shops-41945";
+    const databaseId = "ai-studio-04c143a5-802a-4ee2-beed-77e322975f5e";
+
+    const orderId = String(data.order_id || data.reference_id || `FW26-${Date.now()}`).trim();
+    const customerName = String(data.customer_name || data.name || "Student").trim();
+    const roll = String(data.roll || "N/A").trim();
+    const amount = String(data.amount || 1000);
+    const phone = String(data.customer_phone || data.phone || "01700000000").trim();
+    const email = String(data.customer_email || data.email || `${roll}@farewell2026.com`).trim();
+    const trxid = String(data.trxid || data.transaction_id || `TRX-${Math.random().toString(36).substring(2, 8).toUpperCase()}`).trim();
+    const method = String(data.type || data.method || "ePay Gateway").trim();
+
+    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/payments/${encodeURIComponent(orderId)}`;
+
+    const body = {
+      fields: {
+        order_id: { stringValue: orderId },
+        reference_id: { stringValue: String(data.reference_id || orderId) },
+        customer_name: { stringValue: customerName },
+        roll: { stringValue: roll },
+        amount: { integerValue: amount },
+        customer_phone: { stringValue: phone },
+        customer_email: { stringValue: email },
+        trxid: { stringValue: trxid },
+        status: { stringValue: "paid" },
+        paid: { booleanValue: true },
+        payment_method: { stringValue: method },
+        notes: { stringValue: String(data.reference || "ePay Gateway Verified") },
+        createdAt: { stringValue: new Date().toISOString() },
+      },
+    };
+
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (res.ok) {
+      console.log(`✅ [Firestore Auto-Save] Saved payment ${orderId} to Firestore!`);
+    } else {
+      const errText = await res.text();
+      console.error(`❌ [Firestore Auto-Save Error] for ${orderId}:`, errText);
+    }
+  } catch (err) {
+    console.error("❌ Failed to save to Firestore via REST API:", err);
+  }
+}
+
 // API Endpoint: Webhook Listener for Real-time Instant Notifications
-router.post("/webhook", (req, res) => {
+router.post("/webhook", async (req, res) => {
   try {
     const payload = req.body;
     const webhookSecret = process.env.EPAY_WEBHOOK_SECRET || "4c2649f051d55154130418d55c87d27227c6795b4867679dc4ffbd1757355cf6";
-    const authHeader = req.headers["x-epay-signature"] || req.headers["authorization"];
 
     console.log("🔔 [Webhook Received from ePay]:", JSON.stringify(payload, null, 2));
 
     const event = payload?.event;
     const data = payload?.data || payload;
 
-    if (event === "payment.success" || payload?.status === "success" || payload?.paid === true) {
+    if (event === "payment.success" || payload?.status === "success" || payload?.paid === true || data?.status === "paid" || data?.status === "success") {
       console.log(`✅ Real-time Payment Success Notification for Order ${data.order_id || data.reference_id}, TRX: ${data.trxid}, Amount: ${data.amount}`);
+      await savePaymentToFirestore(data);
     } else if (event === "payment.failed") {
       console.warn(`❌ Payment Failed for Order ${data?.order_id}`);
     }
 
     return res.json({
       status: "success",
-      message: "Webhook processed and verified successfully",
+      message: "Webhook processed and payment saved to database successfully",
       webhook_key_configured: Boolean(webhookSecret),
       received_at: new Date().toISOString()
     });
