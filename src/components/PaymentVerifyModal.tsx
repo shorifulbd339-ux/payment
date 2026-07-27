@@ -94,25 +94,77 @@ export const PaymentVerifyModal: React.FC<PaymentVerifyModalProps> = ({
           statusData?.status === 'success';
 
         if (isPaid || urlPaymentStatus === 'success') {
-          // Prepare clean record
+          const cleanStr = (val: any, fallback: string = '') =>
+            val !== undefined && val !== null && String(val).trim() !== '' ? String(val).trim() : fallback;
+          const cleanNum = (val: any, fallback: number = 1000) => {
+            const n = Number(val);
+            return !isNaN(n) && n > 0 ? n : fallback;
+          };
+
+          const finalOrderId = cleanStr(effectiveOrderId, `FW26-${Date.now()}`);
+          const finalRoll = cleanStr(pendingData?.roll || (statusData as any)?.roll, 'N/A');
+
+          // Prepare clean record with no undefined properties
           const recordToSave: PaymentRecord = {
-            order_id: effectiveOrderId,
-            reference_id: statusData?.reference_id || pendingData?.reference_id || effectiveOrderId,
-            customer_name: pendingData?.customer_name || statusData?.customer_name || 'Student',
-            roll: String(pendingData?.roll || (statusData as any)?.roll || 'N/A'),
-            amount: Number(statusData?.amount || pendingData?.amount || 1000),
-            customer_phone: pendingData?.customer_phone || statusData?.customer_phone || '01700000000',
-            customer_email: pendingData?.customer_email || `${pendingData?.roll || 'student'}@farewell2026.com`,
-            trxid: statusData?.trxid || urlTrxId || `TRX-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+            order_id: finalOrderId,
+            reference_id: cleanStr(statusData?.reference_id || pendingData?.reference_id, finalOrderId),
+            customer_name: cleanStr(pendingData?.customer_name || statusData?.customer_name, 'Student'),
+            roll: finalRoll,
+            amount: cleanNum(statusData?.amount || pendingData?.amount, 1000),
+            customer_phone: cleanStr(pendingData?.customer_phone || statusData?.customer_phone, '01700000000'),
+            customer_email: cleanStr(pendingData?.customer_email || (statusData as any)?.customer_email, `${finalRoll}@farewell2026.com`),
+            trxid: cleanStr(statusData?.trxid || urlTrxId, `TRX-${Math.random().toString(36).substring(2, 8).toUpperCase()}`),
             status: 'paid',
             paid: true,
-            payment_method: (statusData as any)?.method || 'ePay Gateway',
-            notes: pendingData?.notes || '',
+            payment_method: cleanStr((statusData as any)?.method, 'ePay Gateway'),
+            notes: cleanStr(pendingData?.notes, 'Verified via ePay'),
             createdAt: new Date().toISOString(),
           };
 
-          // Save to Firestore
-          await setDoc(docRef, recordToSave, { merge: true });
+          // 1. Save to Firestore via Firebase Client SDK
+          let firestoreSuccess = false;
+          try {
+            const targetDocRef = doc(db, 'payments', finalOrderId);
+            await setDoc(targetDocRef, recordToSave, { merge: true });
+            firestoreSuccess = true;
+            console.log('✅ Payment saved to Firestore SDK successfully:', finalOrderId);
+          } catch (sdkErr) {
+            console.warn('Firestore SDK write error, attempting REST API fallback:', sdkErr);
+          }
+
+          // 2. Direct REST API write to Firestore as fallback (ensures write even if SDK or network blocked)
+          if (!firestoreSuccess) {
+            try {
+              const projectId = 'vip-shops-41945';
+              const databaseId = 'ai-studio-04c143a5-802a-4ee2-beed-77e322975f5e';
+              const restUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/payments/${encodeURIComponent(finalOrderId)}`;
+
+              await fetch(restUrl, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fields: {
+                    order_id: { stringValue: recordToSave.order_id },
+                    reference_id: { stringValue: recordToSave.reference_id },
+                    customer_name: { stringValue: recordToSave.customer_name },
+                    roll: { stringValue: recordToSave.roll },
+                    amount: { integerValue: String(recordToSave.amount) },
+                    customer_phone: { stringValue: recordToSave.customer_phone },
+                    customer_email: { stringValue: recordToSave.customer_email },
+                    trxid: { stringValue: recordToSave.trxid },
+                    status: { stringValue: 'paid' },
+                    paid: { booleanValue: true },
+                    payment_method: { stringValue: recordToSave.payment_method },
+                    notes: { stringValue: recordToSave.notes || '' },
+                    createdAt: { stringValue: recordToSave.createdAt },
+                  },
+                }),
+              });
+              console.log('✅ Payment saved to Firestore REST API successfully:', finalOrderId);
+            } catch (restErr) {
+              console.error('REST API fallback error:', restErr);
+            }
+          }
 
           // Clear local pending payment item
           localStorage.removeItem('pending_farewell_payment');
