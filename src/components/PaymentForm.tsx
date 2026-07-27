@@ -52,6 +52,11 @@ export const PaymentForm: React.FC<PaymentFormProps> = () => {
       customer_email: formData.customer_email || `${formData.roll.trim()}@farewell2026.com`,
     };
 
+    let paymentUrl = '';
+    let orderId = '';
+    let referenceId = `FW26-${payload.roll.trim()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    // 1. Try server-side API endpoint first
     try {
       const res = await fetch('/api/create-payment', {
         method: 'POST',
@@ -59,32 +64,107 @@ export const PaymentForm: React.FC<PaymentFormProps> = () => {
         body: JSON.stringify(payload),
       });
 
-      const data: EPayCreateResponse = await res.json();
-
-      if (res.ok && data.status === 'success' && data.payment_url) {
-        // Save pending metadata to localStorage so when ePay returns, we verify and save to Firestore
-        const pendingPayment = {
-          order_id: data.order_id,
-          reference_id: data.reference_id,
-          customer_name: payload.customer_name,
-          roll: payload.roll,
-          amount: payload.amount,
-          customer_phone: payload.customer_phone,
-          customer_email: payload.customer_email,
-          notes: '',
-          timestamp: new Date().toISOString(),
-        };
-        localStorage.setItem('pending_farewell_payment', JSON.stringify(pendingPayment));
-
-        // Redirect to ePay gateway URL
-        window.location.href = data.payment_url;
-      } else {
-        setError(data.message || 'Failed to generate payment gateway link. Please try again.');
-        setIsLoading(false);
+      if (res.ok) {
+        const data: EPayCreateResponse = await res.json();
+        if (data && data.status === 'success' && data.payment_url) {
+          paymentUrl = data.payment_url;
+          orderId = data.order_id || '';
+          if (data.reference_id) referenceId = data.reference_id;
+        }
       }
-    } catch (err: any) {
-      console.error('Error initiating payment:', err);
-      setError('Could not connect to payment server. Please check your internet connection.');
+    } catch (err) {
+      console.warn('Backend server endpoint unreachable, using direct gateway fallback...', err);
+    }
+
+    // 2. Direct fallback to ePay Gateway if server endpoint returned 404 or failed (e.g. Netlify static hosting)
+    if (!paymentUrl) {
+      try {
+        const hostUrl = window.location.origin.replace(/\/+$/, '');
+        const successUrl = `${hostUrl}/?payment_status=success`;
+        const errorUrl = `${hostUrl}/?payment_status=error`;
+
+        const productsJson = JSON.stringify([
+          {
+            name: `Farewell Fee (Roll ${payload.roll})`,
+            price: Number(payload.amount),
+            quantity: 1,
+            icon: 'fa-graduation-cap',
+          },
+        ]);
+
+        const formParams = new URLSearchParams();
+        formParams.append('store_key', 'GSCYU46MHA59TF2Q5I9PVP5P');
+        formParams.append('amount', String(payload.amount));
+        formParams.append('success_url', successUrl);
+        formParams.append('error_url', errorUrl);
+        formParams.append('reference_id', referenceId);
+        formParams.append('reference', `Farewell 2026 Collection - Roll ${payload.roll}`);
+        formParams.append('customer_name', payload.customer_name);
+        formParams.append('customer_phone', payload.customer_phone || '01700000000');
+        formParams.append('customer_email', payload.customer_email || `${payload.roll}@farewell2026.com`);
+        formParams.append('products', productsJson);
+
+        // Try primary payment.php endpoint
+        const directRes = await fetch('https://epay.corp.com.bd/payment.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formParams.toString(),
+        });
+        const directText = await directRes.text();
+        let directData: any;
+
+        try {
+          directData = JSON.parse(directText);
+        } catch (e) {
+          // Fallback to pay.php endpoint
+          const defaultFormParams = new URLSearchParams();
+          defaultFormParams.append('store_key', 'GSCYU46MHA59TF2Q5I9PVP5P');
+          defaultFormParams.append('amount', String(payload.amount));
+          defaultFormParams.append('success_url', successUrl);
+          defaultFormParams.append('error_url', errorUrl);
+          defaultFormParams.append('reference_id', referenceId);
+          defaultFormParams.append('customer_name', payload.customer_name);
+          defaultFormParams.append('customer_phone', payload.customer_phone || '01700000000');
+          defaultFormParams.append('customer_email', payload.customer_email || `${payload.roll}@farewell2026.com`);
+
+          const fbRes = await fetch('https://epay.corp.com.bd/pay.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: defaultFormParams.toString(),
+          });
+          const fbText = await fbRes.text();
+          directData = JSON.parse(fbText);
+        }
+
+        if (directData && (directData.status === 'success' || directData.payment_url)) {
+          paymentUrl = directData.payment_url;
+          if (directData.order_id) orderId = directData.order_id;
+        }
+      } catch (fallbackErr: any) {
+        console.error('Direct fallback payment creation error:', fallbackErr);
+      }
+    }
+
+    if (paymentUrl) {
+      // Save pending metadata to localStorage so when redirected back, we store the payment to Firestore
+      const pendingPayment = {
+        order_id: orderId || referenceId,
+        reference_id: referenceId,
+        customer_name: payload.customer_name,
+        roll: payload.roll,
+        amount: payload.amount,
+        customer_phone: payload.customer_phone,
+        customer_email: payload.customer_email,
+        notes: '',
+        timestamp: new Date().toISOString(),
+      };
+      localStorage.setItem('pending_farewell_payment', JSON.stringify(pendingPayment));
+      localStorage.setItem('last_farewell_payment_backup', JSON.stringify(pendingPayment));
+
+      // Redirect to ePay payment portal
+      window.location.href = paymentUrl;
+    } else {
+      setError('Could not connect to ePay payment server. Please check your internet connection or try again.');
       setIsLoading(false);
     }
   };

@@ -35,7 +35,7 @@ export const PaymentVerifyModal: React.FC<PaymentVerifyModalProps> = ({
       // 1. Get pending local stored data if available
       let pendingData: any = null;
       try {
-        const raw = localStorage.getItem('pending_farewell_payment');
+        const raw = localStorage.getItem('pending_farewell_payment') || localStorage.getItem('last_farewell_payment_backup');
         if (raw) pendingData = JSON.parse(raw);
       } catch (e) {
         console.error('Failed to parse pending payment:', e);
