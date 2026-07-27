@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "payments": {
+      "title": "Payment Registration",
+      "description": "Farewell party payment registrations for students",
+      "type": "object",
+      "properties": {
+        "order_id": { "type": "string" },
+        "reference_id": { "type": "string" },
+        "customer_name": { "type": "string" },
+        "roll": { "type": "string" },
+        "amount": { "type": "number" },
+        "customer_phone": { "type": "string" },
+        "customer_email": { "type": "string" },
+        "trxid": { "type": "string" },
+        "status": { "type": "string" },
+        "paid": { "type": "boolean" },
+        "payment_method": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["customer_name", "roll", "amount", "paid"]
+    }
+  }
+}

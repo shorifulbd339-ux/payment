@@ -1,0 +1,7 @@
+{
+  "name": "Class Farewell Fee Portal",
+  "description": "Class Biday Onusthan fee collection and ePay payment gateway with Firebase Firestore database verification and Admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

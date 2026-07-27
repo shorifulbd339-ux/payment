@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow public read for verified payments (or all payments)
+    match /payments/{paymentId} {
+      allow read: if true;
+      allow write: if true; // Allowed for client and admin writes (verified payments & admin ops)
+    }
+  }
+}
