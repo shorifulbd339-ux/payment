@@ -5,16 +5,26 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Path normalization for Netlify functions
+app.use((req, res, next) => {
+  if (req.url.startsWith("/.netlify/functions/api")) {
+    req.url = req.url.replace("/.netlify/functions/api", "") || "/";
+  }
+  next();
+});
+
 // ePay Store Key
 const STORE_KEY = process.env.EPAY_STORE_KEY || "GSCYU46MHA59TF2Q5I9PVP5P";
 
+const router = express.Router();
+
 // API Endpoint: Health Check
-app.get("/api/health", (req, res) => {
+router.get("/health", (req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
 // API Endpoint: Create Payment Link with ePay Gateway
-app.post("/api/create-payment", async (req, res) => {
+router.post("/create-payment", async (req, res) => {
   try {
     const { customer_name, roll, amount, customer_phone, customer_email, notes } = req.body;
 
@@ -118,7 +128,7 @@ app.post("/api/create-payment", async (req, res) => {
 });
 
 // API Endpoint: Check/Verify Order Status with ePay Public API
-app.get("/api/verify-payment", async (req, res) => {
+router.get("/verify-payment", async (req, res) => {
   try {
     const { order_id } = req.query;
     if (!order_id || typeof order_id !== "string") {
@@ -137,7 +147,7 @@ app.get("/api/verify-payment", async (req, res) => {
 });
 
 // API Endpoint: Static MFS Verification API
-app.all("/api/verify-static-payment", async (req, res) => {
+router.all("/verify-static-payment", async (req, res) => {
   try {
     const apiKey = req.query.api_key || req.body.api_key || process.env.EPAY_API_KEY || "a1b2c3d4e5f6";
     const mfs = req.query.mfs || req.body.mfs;
@@ -169,7 +179,7 @@ app.all("/api/verify-static-payment", async (req, res) => {
 });
 
 // API Endpoint: Webhook Listener for Real-time Instant Notifications
-app.post("/api/webhook", (req, res) => {
+router.post("/webhook", (req, res) => {
   try {
     const payload = req.body;
     const webhookSecret = process.env.EPAY_WEBHOOK_SECRET || "4c2649f051d55154130418d55c87d27227c6795b4867679dc4ffbd1757355cf6";
@@ -197,5 +207,9 @@ app.post("/api/webhook", (req, res) => {
     return res.status(500).json({ status: "error", message: "Failed to process webhook" });
   }
 });
+
+// Mount router under /api AND root / (so it works with or without /api path prefix)
+app.use("/api", router);
+app.use("/", router);
 
 export default app;
